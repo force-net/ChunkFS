@@ -17,26 +17,29 @@ namespace Force.ChunkFS
 
 		private readonly string _fileFullPath;
 
-		private FileAccess _access;
-
 		public FileAttributes? Attributes { get; set; }
 
-		private FileStream _currentStream;
+		private Stream _currentReadStream;
 
-		private long _currentIndex = -1;
+		private long _currentReadIndex = -1;
+
+		private Stream _currentWriteStream;
+
+		private long _currentWriteIndex = -1;
+
+		private string _currentWriteStreamFileName;
 
 		public ChunkedFileInfo(string fileName)
-			: this(fileName, FileAccess.Read, FileMode.Open)
+			: this(fileName, FileMode.Open)
 		{
 		}
 
-		public ChunkedFileInfo(string fileName, FileAccess access, FileMode mode)
+		public ChunkedFileInfo(string fileName, FileMode mode)
 		{
 			_filePrefix = Path.GetFileName(fileName);
 			_directory = Path.GetDirectoryName(fileName);
 			// meta file name with chunk suffix for better search and to ensure used won't try to open empty file by extension
 			_fileFullPath = fileName + ChunkFSConstants.MetaFileExtension;
-			_access = access;
 			if (mode == FileMode.Truncate || mode == FileMode.Create)
 				DeleteAllChunks();
 			// Console.WriteLine(fileName + " " + mode);
@@ -63,22 +66,31 @@ namespace Force.ChunkFS
 		private List<string> GetExistingFiles()
 		{
 			// does not return meta chunk
-			return Directory.GetFiles(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + "*").Where(x => !x.EndsWith(ChunkFSConstants.MetaFileExtension)).ToList();
+			return Directory.GetFiles(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + "*").Where(x => !x.EndsWith(ChunkFSConstants.MetaFileExtension))
+				// .Concat(Directory.GetFiles(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + "*" + ChunkFSConstants.CompressedFileExtension))
+				.ToList();
 		}
 
 		public void Write(byte[] buffer, long position)
 		{
+			// position from end
+			if (position < 0)
+			{
+				if (!_length.HasValue) GetFileInfo();
+				position = _length.GetValueOrDefault() + 1 + position;
+			}
+
 			var offset = 0;
 			var count = buffer.Length;
 			while (count > 0)
 			{
 				var requiredChunk = position / ChunkFSConstants.ChunkSize;
-				OpenChunk(requiredChunk, false);
+				OpenWriteChunk(requiredChunk);
 				var chunkOffset = (int) (position % ChunkFSConstants.ChunkSize);
-				_currentStream.Position = chunkOffset;
+				_currentWriteStream.Position = chunkOffset;
 
 				var toWrite = Math.Min(Math.Min(ChunkFSConstants.ChunkSize, count), ChunkFSConstants.ChunkSize - chunkOffset);
-				_currentStream.Write(buffer, offset, toWrite);
+				_currentWriteStream.Write(buffer, offset, toWrite);
 				offset += toWrite;
 				count -= toWrite;
 				position += toWrite;
@@ -90,17 +102,24 @@ namespace Force.ChunkFS
 
 		public int Read(byte[] buffer, long position)
 		{
+			// position from end
+			if (position < 0)
+			{
+				if (!_length.HasValue) GetFileInfo();
+				position = _length.GetValueOrDefault() + 1 - position;
+			}
+
 			var offset = 0;
 			var count = buffer.Length;
 			while (offset < buffer.Length)
 			{
 				var requiredChunk = position / ChunkFSConstants.ChunkSize;
-				OpenChunk(requiredChunk, true);
+				OpenReadChunk(requiredChunk);
 				var chunkOffset = position % ChunkFSConstants.ChunkSize;
-				_currentStream.Position = chunkOffset;
+				_currentReadStream.Position = chunkOffset;
 
 				var toRead = (int)Math.Min(Math.Min(ChunkFSConstants.ChunkSize, count), ChunkFSConstants.ChunkSize - chunkOffset);
-				var readed = _currentStream.Read(buffer, offset, toRead);
+				var readed = _currentReadStream.Read(buffer, offset, toRead);
 				if (readed == 0)
 					break;
 				offset += readed;
@@ -111,24 +130,77 @@ namespace Force.ChunkFS
 			return offset;
 		}
 
-		private void OpenChunk(long requiredChunk, bool isRead)
+		private void OpenReadChunk(long requiredChunk)
 		{
-			if (_currentIndex != requiredChunk || _currentStream == null)
+			if (_currentReadIndex != requiredChunk || _currentReadStream == null)
+			{
+				_currentReadStream?.Dispose();
+				var path = Path.Combine(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + requiredChunk.ToString("0000", CultureInfo.InvariantCulture));
+				if (File.Exists(path))
+					_currentReadStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+				else
+				{
+					// compressed data
+					_currentReadStream = CompressorQueue.Instance.DecompressFile(path);
+				}
+				_currentReadIndex = requiredChunk;
+			}
+		}
+
+		private void OpenWriteChunk(long requiredChunk)
+		{
+			if (_currentWriteIndex != requiredChunk || _currentWriteStream == null)
 			{
 				// will set data after our real close
-				if (!isRead)
-					_currentStream?.Flush();
-				_currentStream?.Dispose();
-				var path = Path.Combine(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + requiredChunk.ToString("0000", CultureInfo.InvariantCulture));
-				_currentStream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
-				_currentIndex = requiredChunk;
+				_currentWriteStream?.Flush();
+				_currentWriteStream?.Dispose();
+				if (_currentWriteStreamFileName != null)
+					CompressorQueue.Instance.AddFileToCompressQueue(_currentWriteStreamFileName);
+
+				_currentWriteStreamFileName = Path.Combine(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + requiredChunk.ToString("0000", CultureInfo.InvariantCulture));
+
+				if (File.Exists(_currentWriteStreamFileName + ChunkFSConstants.CompressedFileExtension) &&
+				    !File.Exists(_currentWriteStreamFileName))
+				{
+					// we already read this chunk, will reopen it
+					if (_currentReadStream != null && _currentReadIndex == _currentWriteIndex)
+					{
+						// flushing all memory data to uncompressed file
+						if (_currentReadStream is MemoryStream)
+						{
+							_currentReadStream.Position = 0;
+							using (var f = File.OpenWrite(_currentWriteStreamFileName))
+								_currentReadStream.CopyTo(f);
+							CompressorQueue.Instance.DeleteCompressedFile(_currentWriteStreamFileName);
+							// reopening read stream
+							_currentReadStream = null;
+							OpenReadChunk(_currentReadIndex);
+						}
+					}
+					else
+					{
+						// just uncompress it
+						var df = CompressorQueue.Instance.DecompressFile(_currentWriteStreamFileName);
+						using (var f = File.OpenWrite(_currentWriteStreamFileName))
+							df.CopyTo(f);
+						CompressorQueue.Instance.DeleteCompressedFile(_currentWriteStreamFileName);
+					}
+				}
+
+				_currentWriteStream = new FileStream(_currentWriteStreamFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+				_currentWriteIndex = requiredChunk;
 			}
 		}
 
 		public void Close()
 		{
-			_currentStream?.Dispose();
-			_currentStream = null;
+			_currentReadStream?.Dispose();
+			_currentReadStream = null;
+
+			_currentWriteStream?.Dispose();
+			_currentWriteStream = null;
+			if (_currentWriteStreamFileName != null)
+				CompressorQueue.Instance.AddFileToCompressQueue(_currentWriteStreamFileName);
 
 			if (!File.Exists(_fileFullPath))
 				return;
@@ -150,16 +222,22 @@ namespace Force.ChunkFS
 
 		public void Flush()
 		{
-			_currentStream?.Flush();
+			_currentWriteStream?.Flush();
 		}
 
 		public void MoveFile(string newpath)
 		{
-			File.Move(_fileFullPath, newpath);
+			File.Move(_fileFullPath, newpath + ChunkFSConstants.MetaFileExtension);
 			GetExistingFiles().ForEach(x =>
 			{
-				var chunkName = Path.GetExtension(x);
+				var idx = x.IndexOf(ChunkFSConstants.ChunkExtension, StringComparison.Ordinal);
+				// .chunk001 or .chunk002.blz
+				var chunkName = x.Remove(0, idx);
+
 				File.Move(x, newpath + chunkName);
+				// trying to re-add compressed data to queue (copy and move situation)
+				if (!x.EndsWith(ChunkFSConstants.CompressedFileExtension))
+					CompressorQueue.Instance.AddFileToCompressQueueIfNotExists(newpath + chunkName, x);
 			});
 		}
 
@@ -171,21 +249,29 @@ namespace Force.ChunkFS
 
 		public void SetLength(long length)
 		{
+			if (_length.HasValue && _length == length)
+				return;
 			var maxChunkNumber = Math.Max((length - 1) / ChunkFSConstants.ChunkSize, 0);
 			var lastChunkSize = length - maxChunkNumber * ChunkFSConstants.ChunkSize;
 			GetExistingFiles()
-				.Where(x => Convert.ToInt32((Path.GetExtension(x) ?? string.Empty).Remove(0, ChunkFSConstants.ChunkExtension.Length)) > maxChunkNumber)
+				.Select(x => x.EndsWith(ChunkFSConstants.CompressedFileExtension) ? x.Substring(0, x.Length - ChunkFSConstants.CompressedFileExtension.Length) : x)
+				.Where(x => Convert.ToInt32(Path.GetExtension(x).Remove(0, ChunkFSConstants.ChunkExtension.Length)) > maxChunkNumber)
 				.ToList()
-				.ForEach(File.Delete);
+				.ForEach(x =>
+				{
+					File.Delete(x);
+					CompressorQueue.Instance.DeleteCompressedFile(x);
+				});
 
 			for (var i = 0; i < maxChunkNumber; i++)
 			{
-				OpenChunk(i, false);
-				_currentStream.SetLength(ChunkFSConstants.ChunkSize);
+				OpenWriteChunk(i);
+				_currentWriteStream.SetLength(ChunkFSConstants.ChunkSize);
 			}
 
-			OpenChunk(maxChunkNumber, false);
-			_currentStream.SetLength(lastChunkSize);
+			OpenWriteChunk(maxChunkNumber);
+			_currentWriteStream.SetLength(lastChunkSize);
+			_length = length;
 		}
 
 		public FileSecurity GetAccessControl()
@@ -215,15 +301,18 @@ namespace Force.ChunkFS
 		public FileInformation GetFileInfo()
 		{
 			var finfo = new FileInfo(_fileFullPath);
-			return new FileInformation
+			var l = new FileInformation
 			{
 				Attributes = Attributes ?? finfo.Attributes,
 				CreationTime = CreationTime ?? finfo.CreationTime,
-				LastAccessTime = LastAccessTime ?? LastAccessTime,
+				LastAccessTime = LastAccessTime ?? finfo.LastAccessTime,
 				FileName = _filePrefix,
-				LastWriteTime = LastWriteTime ?? LastWriteTime,
-				Length = _length ?? (_length = GetExistingFiles().Sum(x => new FileInfo(x).Length)).Value
+				LastWriteTime = LastWriteTime ?? finfo.LastWriteTime,
+				Length = _length ?? (_length = GetExistingFiles().Sum(x => x.EndsWith(ChunkFSConstants.CompressedFileExtension) ? ChunkFSConstants.ChunkSize : new FileInfo(x).Length)).Value
 			};
+			// Console.WriteLine("GetFileInfo: " + _fileFullPath + " " + GetExistingFiles().Count);
+
+			return l;
 		}
 
 	}

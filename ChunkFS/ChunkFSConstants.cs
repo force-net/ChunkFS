@@ -7,5 +7,7 @@
 		public const string ChunkExtension = ".chunk";
 
 		public const string MetaFileExtension = ".chunk$$$$";
+
+		public const string CompressedFileExtension = ".blz";
 	}
 }

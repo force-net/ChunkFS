@@ -10,7 +10,7 @@ namespace Force.ChunkFS
 	{
 		private readonly string _basePath;
 
-		private IFileStorage _realStorage;
+		private readonly IFileStorage _realStorage;
 
 		public WrappedPathFileStorage(IFileStorage realStorage, string path)
 		{
@@ -27,104 +27,264 @@ namespace Force.ChunkFS
 
 		public NtStatus OpenDirectory(string directoryPath)
 		{
-			return _realStorage.OpenDirectory(GetPath(directoryPath));
+			try
+			{
+				return _realStorage.OpenDirectory(GetPath(directoryPath));
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus CreateDirectory(string directoryPath)
 		{
-			return _realStorage.CreateDirectory(GetPath(directoryPath));
+			try
+			{
+				return _realStorage.CreateDirectory(GetPath(directoryPath));
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus OpenFile(string filePath, FileAccess access, FileShare share, FileMode mode, FileOptions options,
 			FileAttributes attributes, DokanFileInfo info)
 		{
-			return _realStorage.OpenFile(GetPath(filePath), access, share, mode, options, attributes, info);
+			try
+			{
+				return _realStorage.OpenFile(GetPath(filePath), access, share, mode, options, attributes, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public void CloseFile(string fileName, DokanFileInfo info)
 		{
-			_realStorage.CloseFile(GetPath(fileName), info);
+			try
+			{
+				_realStorage.CloseFile(GetPath(fileName), info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public int ReadFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
-			return _realStorage.ReadFile(GetPath(fileName), buffer, offset, info);
+			try
+			{
+				return _realStorage.ReadFile(GetPath(fileName), buffer, offset, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public int WriteFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
-			return _realStorage.WriteFile(GetPath(fileName), buffer, offset, info);
+			try
+			{
+				return _realStorage.WriteFile(GetPath(fileName), buffer, offset, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus FlushFile(DokanFileInfo info)
 		{
-			return _realStorage.FlushFile(info);
+			try
+			{
+				return _realStorage.FlushFile(info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public FileInformation GetFileInformation(string fileName, DokanFileInfo info)
 		{
-			return _realStorage.GetFileInformation(GetPath(fileName), info);
+			try
+			{
+				return _realStorage.GetFileInformation(GetPath(fileName), info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public FileInformation[] FindFiles(string fileName, string searchPattern)
 		{
-			return _realStorage.FindFiles(GetPath(fileName), searchPattern);
+			try
+			{
+				return _realStorage.FindFiles(GetPath(fileName), searchPattern);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, DokanFileInfo info)
 		{
-			return _realStorage.SetFileAttributes(GetPath(fileName), attributes, info);
+			try
+			{
+				return _realStorage.SetFileAttributes(GetPath(fileName), attributes, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus SetFileTime(string fileName, DateTime? creationTime, DateTime? lastAccessTime, DateTime? lastWriteTime,
 			DokanFileInfo info)
 		{
-			return _realStorage.SetFileTime(GetPath(fileName), creationTime, lastAccessTime, lastWriteTime, info);
+			try
+			{
+				return _realStorage.SetFileTime(GetPath(fileName), creationTime, lastAccessTime, lastWriteTime, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus CheckCanDeleteFile(string fileName)
 		{
-			return _realStorage.CheckCanDeleteFile(GetPath(fileName));
+			try
+			{
+				return _realStorage.CheckCanDeleteFile(GetPath(fileName));
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus CheckCanDeleteDirectory(string fileName)
 		{
-			return _realStorage.CheckCanDeleteDirectory(GetPath(fileName));
+			try
+			{
+				return _realStorage.CheckCanDeleteDirectory(GetPath(fileName));
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus MoveFile(string oldName, string newName, bool replace, DokanFileInfo info)
 		{
-			return _realStorage.MoveFile(GetPath(oldName), GetPath(newName), replace, info);
+			try
+			{
+				return _realStorage.MoveFile(GetPath(oldName), GetPath(newName), replace, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus SetLength(long length, DokanFileInfo info)
 		{
-			return _realStorage.SetLength(length, info);
+			try
+			{
+				return _realStorage.SetLength(length, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus LockFile(long offset, long length, DokanFileInfo info)
 		{
-			return _realStorage.LockFile(offset, length, info);
+			try
+			{
+				return _realStorage.LockFile(offset, length, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus UnlockFile(long offset, long length, DokanFileInfo info)
 		{
-			return _realStorage.UnlockFile(offset, length, info);
+			try
+			{
+				return _realStorage.UnlockFile(offset, length, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public DriveInfo GetDiskFreeSpace(string basePath)
 		{
-			return _realStorage.GetDiskFreeSpace(_basePath);
+			try
+			{
+				return _realStorage.GetDiskFreeSpace(_basePath);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public FileSystemSecurity GetFileSecurity(string fileName, DokanFileInfo info)
 		{
-			return _realStorage.GetFileSecurity(GetPath(fileName), info);
+			try
+			{
+				return _realStorage.GetFileSecurity(GetPath(fileName), info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 
 		public NtStatus SetFileSecurity(string fileName, FileSystemSecurity security, DokanFileInfo info)
 		{
-			return _realStorage.SetFileSecurity(GetPath(fileName), security, info);
+			try
+			{
+				return _realStorage.SetFileSecurity(GetPath(fileName), security, info);
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e);
+				throw;
+			}
 		}
 	}
 }

@@ -142,7 +142,7 @@ namespace Force.ChunkFS
 		public NtStatus GetVolumeInformation(out string volumeLabel, out FileSystemFeatures features,
 			out string fileSystemName, DokanFileInfo info)
 		{
-			volumeLabel = "DOKAN";
+			volumeLabel = "ChunkFS";
 			fileSystemName = "NTFS";
 
 			features = FileSystemFeatures.CasePreservedNames | FileSystemFeatures.CaseSensitiveSearch |
@@ -156,6 +156,8 @@ namespace Force.ChunkFS
 			DokanFileInfo info)
 		{
 			security = _storage.GetFileSecurity(fileName, info);
+			if (security == null)
+				Console.WriteLine("Null Security: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
 			return security == null ? NtStatus.AccessDenied : NtStatus.Success;
 		}
 
@@ -186,7 +188,7 @@ namespace Force.ChunkFS
 		public NtStatus FindStreams(string fileName, out IList<FileInformation> streams, DokanFileInfo info)
 		{
 			streams = new FileInformation[0];
-			return DokanResult.Success;
+			return DokanResult.NotImplemented;
 		}
 
 		public NtStatus FindFilesWithPattern(string fileName, string searchPattern, out IList<FileInformation> files,

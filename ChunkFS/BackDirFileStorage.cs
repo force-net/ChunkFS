@@ -77,14 +77,14 @@ namespace Force.ChunkFS
 		public NtStatus OpenFile(string filePath, FileAccess access, FileShare share, FileMode mode,
 			FileOptions options, FileAttributes attributes, DokanFileInfo info)
 		{
-			// if (filePath != "\\")
-			//	Console.WriteLine("OpenFile: " + filePath /*+ " " + access + " " + share + " " + mode + " " + options + " " + attributes*/ + " " + info.Context);
+			// if (filePath != "\\" && !info.IsDirectory)
+			//	Console.WriteLine("OpenFile: " + filePath + " A:" + access + " S:" + share + " M:" + mode + " O:" + options + " A:" + attributes + " " + info.Context);
 
 			var pathExists = true;
 			var pathIsDirectory = false;
 
 			var readWriteAttributes = (access & DataAccess) == 0;
-			var readAccess = (access & DataWriteAccess) == 0;
+			// var readAccess = (access & DataWriteAccess) == 0;
 
 			var directoryExist = Directory.Exists(filePath);
 
@@ -111,9 +111,12 @@ namespace Force.ChunkFS
 								//It is a DeleteFile request on a directory
 								return DokanResult.AccessDenied;
 
-							info.IsDirectory = pathIsDirectory;
-							info.Context = new object();
-							// must set it to someting if you return DokanError.Success
+							// if (pathIsDirectory)
+							{
+								info.IsDirectory = pathIsDirectory;
+								// must set it to someting if you return DokanError.Success
+								info.Context = new object();
+							}
 
 							return DokanResult.Success;
 						}
@@ -138,7 +141,7 @@ namespace Force.ChunkFS
 			try
 			{
 				var result = DokanResult.Success;
-				info.Context = new ChunkedFileInfo(filePath, readAccess ? System.IO.FileAccess.Read : System.IO.FileAccess.ReadWrite, mode/*, share, 4096, options*/);
+				info.Context = new ChunkedFileInfo(filePath, mode/*, share, 4096, options*/);
 
 				if (pathExists && (mode == FileMode.OpenOrCreate || mode == FileMode.Create))
 					result = DokanResult.AlreadyExists;
@@ -146,18 +149,22 @@ namespace Force.ChunkFS
 				if (mode == FileMode.CreateNew || mode == FileMode.Create) //Files are always created as Archive
 					attributes |= FileAttributes.Archive;
 				((ChunkedFileInfo)info.Context).Attributes = attributes;
+				// Console.WriteLine("OpenFile result " + filePath + " " + result);
 				return result;
 			}
 			catch (UnauthorizedAccessException) // don't have access rights
 			{
+				Console.WriteLine("E12");
 				return DokanResult.AccessDenied;
 			}
 			catch (DirectoryNotFoundException)
 			{
+				Console.WriteLine("E13");
 				return DokanResult.PathNotFound;
 			}
 			catch (Exception ex)
 			{
+				Console.WriteLine("E14");
 				var hr = (uint) Marshal.GetHRForException(ex);
 				switch (hr)
 				{
@@ -171,6 +178,8 @@ namespace Force.ChunkFS
 
 		public void CloseFile(string fileName, DokanFileInfo info)
 		{
+			// if (!info.IsDirectory)
+			//	Console.WriteLine("Close: " + fileName + " Do Delete? " + info.DeleteOnClose);
 			(info.Context as ChunkedFileInfo)?.Dispose();
 			info.Context = null;
 
@@ -189,6 +198,7 @@ namespace Force.ChunkFS
 
 		public int ReadFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
+			Console.WriteLine("Read: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null) // memory mapped read
 			{
 				using (var stream = new ChunkedFileInfo(fileName))
@@ -214,10 +224,10 @@ namespace Force.ChunkFS
 
 		public int WriteFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
-			// Console.WriteLine("Write: " + fileName + " offset " + offset + " length " + buffer.Length);
+			Console.WriteLine("Write: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null)
 			{
-				using (var stream = new ChunkedFileInfo(fileName, System.IO.FileAccess.Write, FileMode.Open))
+				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open))
 				{
 					stream.Write(buffer, offset);
 					return buffer.Length;
@@ -226,15 +236,8 @@ namespace Force.ChunkFS
 			else
 			{
 				var stream = info.Context as ChunkedFileInfo;
-				if (stream != null)
-				{
-					lock (stream) //Protect from overlapped write
-					{
-						stream.Write(buffer, offset);
-					}
-
-					return buffer.Length;
-				}
+				stream?.Write(buffer, offset);
+				return buffer.Length;
 			}
 
 			// incorrect situation
@@ -245,17 +248,20 @@ namespace Force.ChunkFS
 		{
 			try
 			{
+				Console.WriteLine("Flush");
 				(info.Context as ChunkedFileInfo)?.Flush();
 				return DokanResult.Success;
 			}
 			catch (IOException)
 			{
+				Console.WriteLine("Flush fail");
 				return DokanResult.DiskFull;
 			}
 		}
 
 		public FileInformation GetFileInformation(string fileName, DokanFileInfo info)
 		{
+			// Console.WriteLine("GetFileInfo: " + fileName + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
 				var chunkedInfo = info.Context as ChunkedFileInfo;
@@ -287,8 +293,14 @@ namespace Force.ChunkFS
 			}
 		}
 
+		private static readonly char[] InvalidSearchChars = Path.GetInvalidFileNameChars().Except(new[] {'*', '?'}).ToArray();
+
 		public FileInformation[] FindFiles(string fileName, string searchPattern)
 		{
+			// Console.WriteLine("FindFiles: " + fileName + " " + searchPattern);
+			// rare case, but it is bad to throw an exception here
+			if (searchPattern.Any(x => InvalidSearchChars.Contains(x)))
+				searchPattern = new string(searchPattern.Select(x => InvalidSearchChars.Contains(x) ? '_' : x).ToArray());
 			var directoryInfo = new DirectoryInfo(fileName);
 			var dirs = directoryInfo.GetDirectories(searchPattern)
 				.Select(x => new FileInformation
@@ -302,30 +314,30 @@ namespace Force.ChunkFS
 				});
 
 			var files = dirs.Concat(directoryInfo
-				.GetFileSystemInfos(searchPattern + ChunkFSConstants.ChunkExtension + "*")
-				.GroupBy(x => Path.GetFileNameWithoutExtension(x.Name))
+				.GetFileSystemInfos(searchPattern + ChunkFSConstants.MetaFileExtension)
 				.Select(x =>
 				{
-					var finfo = x.FirstOrDefault(y => y.Name.EndsWith(ChunkFSConstants.MetaFileExtension));
-					// some failed data
-					if (finfo == null)
-						return new FileInformation();
-					return new FileInformation
+					var origName = Path.Combine(fileName, Path.GetFileNameWithoutExtension(x.FullName));
+					// Console.WriteLine(origName);
+					try
 					{
-						Attributes = finfo.Attributes,
-						CreationTime = finfo.CreationTime,
-						LastAccessTime = finfo.LastAccessTime,
-						LastWriteTime = finfo.LastWriteTime,
-						Length = x.Sum(y => ((FileInfo) y).Length),
-						FileName = Path.GetFileNameWithoutExtension(finfo.Name)
-					};
-				})).Where(x => x.FileName != null).ToArray();
+						return new ChunkedFileInfo(origName).GetFileInfo();
+					}
+					catch (Exception e)
+					{
+						Console.WriteLine(e);
+						throw;
+					}
 
+				})).ToArray();
+
+			// Console.WriteLine(files.Length);
 			return files;
 		}
 
 		public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, DokanFileInfo info)
 		{
+			Console.WriteLine("SetFileAttributes: " + fileName + " " + attributes + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
 				ChunkedFileInfo c = info.Context as ChunkedFileInfo;
@@ -337,7 +349,7 @@ namespace Force.ChunkFS
 						File.SetAttributes(fileName, attributes);
 					else
 					{
-						using (var chunkedFileInfo = new ChunkedFileInfo(fileName, System.IO.FileAccess.Read, FileMode.Open))
+						using (var chunkedFileInfo = new ChunkedFileInfo(fileName))
 							chunkedFileInfo.Attributes = attributes;
 					}
 				}
@@ -345,14 +357,17 @@ namespace Force.ChunkFS
 			}
 			catch (UnauthorizedAccessException)
 			{
+				Console.WriteLine("E9");
 				return DokanResult.AccessDenied;
 			}
 			catch (FileNotFoundException)
 			{
+				Console.WriteLine("E10");
 				return DokanResult.FileNotFound;
 			}
 			catch (DirectoryNotFoundException)
 			{
+				Console.WriteLine("E11");
 				return DokanResult.PathNotFound;
 			}
 		}
@@ -360,9 +375,10 @@ namespace Force.ChunkFS
 		public NtStatus SetFileTime(string fileName, DateTime? creationTime, DateTime? lastAccessTime,
 			DateTime? lastWriteTime, DokanFileInfo info)
 		{
+			Console.WriteLine("SetFileTime: " + fileName + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
-				var doCloseFile = true;
+				var doCloseFile = false;
 				var fs = info.Context as ChunkedFileInfo;
 				if (fs == null)
 				{
@@ -380,7 +396,7 @@ namespace Force.ChunkFS
 					}
 
 					fs = new ChunkedFileInfo(fileName);
-					doCloseFile = false;
+					doCloseFile = true;
 				}
 
 				if (creationTime.HasValue)
@@ -399,24 +415,29 @@ namespace Force.ChunkFS
 			}
 			catch (UnauthorizedAccessException)
 			{
+				Console.WriteLine("E1");
 				return DokanResult.AccessDenied;
 			}
 			catch (FileNotFoundException)
 			{
+				Console.WriteLine("E2");
 				return DokanResult.FileNotFound;
 			}
 			catch (DirectoryNotFoundException)
 			{
+				Console.WriteLine("E3");
 				return DokanResult.PathNotFound;
 			}
 			catch (Exception)
 			{
+				Console.WriteLine("E4");
 				return DokanResult.AccessDenied;
 			}
 		}
 
 		public NtStatus CheckCanDeleteFile(string fileName)
 		{
+			Console.WriteLine("Can Delete? " + fileName);
 			// we just check here if we could delete the file - the true deletion is in Cleanup
 			if (Directory.Exists(fileName))
 				return DokanResult.AccessDenied;
@@ -427,6 +448,7 @@ namespace Force.ChunkFS
 			if (new ChunkedFileInfo(fileName).GetAttributes().HasFlag(FileAttributes.Directory))
 				return DokanResult.AccessDenied;
 
+			Console.WriteLine("Can Delete+ " + fileName);
 			return DokanResult.Success;
 		}
 
@@ -439,10 +461,11 @@ namespace Force.ChunkFS
 
 		public NtStatus MoveFile(string oldName, string newName, bool replace, DokanFileInfo info)
 		{
+			Console.WriteLine("Move: " + oldName + " -> " + newName + ". Replace: " + replace);
 			(info.Context as ChunkedFileInfo)?.Dispose();
 			info.Context = null;
 
-			var exist = info.IsDirectory ? Directory.Exists(newName) : File.Exists(newName);
+			var exist = info.IsDirectory ? Directory.Exists(newName) : new ChunkedFileInfo(newName).Exists();
 
 			try
 			{
@@ -479,11 +502,13 @@ namespace Force.ChunkFS
 		{
 			try
 			{
+				Console.WriteLine("Set Length " + length);
 				((ChunkedFileInfo)info.Context)?.SetLength(length);
 				return DokanResult.Success;
 			}
 			catch (IOException)
 			{
+				Console.WriteLine("E6 " + length);
 				return DokanResult.DiskFull;
 			}
 		}
@@ -524,6 +549,7 @@ namespace Force.ChunkFS
 
 		public FileSystemSecurity GetFileSecurity(string fileName, DokanFileInfo info)
 		{
+			Console.WriteLine("GetFileSecurity: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
 			try
 			{
 				return info.IsDirectory
@@ -532,12 +558,14 @@ namespace Force.ChunkFS
 			}
 			catch (UnauthorizedAccessException)
 			{
+				Console.WriteLine("E7");
 				return null;
 			}
 		}
 
 		public NtStatus SetFileSecurity(string fileName, FileSystemSecurity security, DokanFileInfo info)
 		{
+			Console.WriteLine("SetFileSecurity: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
 			try
 			{
 				if (info.IsDirectory)
@@ -553,6 +581,7 @@ namespace Force.ChunkFS
 			}
 			catch (UnauthorizedAccessException)
 			{
+				Console.WriteLine("E8");
 				return DokanResult.AccessDenied;
 			}
 		}

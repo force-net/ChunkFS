@@ -11,7 +11,7 @@ namespace Force.ChunkFS
 			{
 				if (args.Length < 2)
 				{
-					Console.WriteLine("Usage ChunkFS.exe storagepath virtualpath");
+					Console.WriteLine("Usage: ChunkFS.exe storagepath virtualpath");
 					return;
 				}
 
