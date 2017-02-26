@@ -1,0 +1,13 @@
+﻿{
+  "version": "0.1.0-*",
+  "buildOptions": {
+    "debugType": "full",
+    "emitEntryPoint": true
+  },
+  "dependencies": {
+    "DokanNet": "1.1.0.1"
+  },
+  "frameworks": {
+    "net40": {}
+  }
+}
