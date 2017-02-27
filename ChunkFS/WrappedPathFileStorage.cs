@@ -25,24 +25,11 @@ namespace Force.ChunkFS
 			return _basePath + path;
 		}
 
-		public NtStatus OpenDirectory(string directoryPath)
+		public NtStatus OpenOrCreateDirectory(string directoryPath, bool isOpen, bool isCreate)
 		{
 			try
 			{
-				return _realStorage.OpenDirectory(GetPath(directoryPath));
-			}
-			catch (Exception e)
-			{
-				Console.WriteLine(e);
-				throw;
-			}
-		}
-
-		public NtStatus CreateDirectory(string directoryPath)
-		{
-			try
-			{
-				return _realStorage.CreateDirectory(GetPath(directoryPath));
+				return _realStorage.OpenOrCreateDirectory(GetPath(directoryPath), isOpen, isCreate);
 			}
 			catch (Exception e)
 			{

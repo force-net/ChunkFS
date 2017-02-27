@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Text;
 using DokanNet;
 using FileAccess = DokanNet.FileAccess;
 
@@ -11,10 +13,42 @@ namespace Force.ChunkFS
 	{
 		private readonly IFileStorage _storage;
 
+		[DllImport("Kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+		[return: MarshalAs(UnmanagedType.Bool)]
+		private static extern  bool GetVolumeInformation(
+			string rootPathName,
+			StringBuilder volumeNameBuffer,
+			int volumeNameSize,
+			out uint volumeSerialNumber,
+			out uint maximumComponentLength,
+			out FileSystemFeatures fileSystemFlags,
+			StringBuilder fileSystemNameBuffer,
+			int nFileSystemNameSize);
 
-		public DokanOperations(IFileStorage storage)
+		private readonly string _volumeName = "ChunkFS";
+
+		private readonly string _fsName = "NTFS";
+
+		private FileSystemFeatures? _existingFsFlags;
+
+		public DokanOperations(IFileStorage storage, string mountName)
 		{
 			_storage = storage;
+			// mount to junction point
+			if (mountName.Length > 3)
+			{
+				if (!Directory.Exists(mountName))
+					Directory.CreateDirectory(mountName);
+				StringBuilder volname = new StringBuilder(261);
+				StringBuilder fsname = new StringBuilder(261);
+				uint sernum, maxlen;
+				FileSystemFeatures flags;
+				if(!GetVolumeInformation(mountName.Substring(0, 3), volname, volname.Capacity, out sernum, out maxlen, out flags, fsname, fsname.Capacity))
+					Marshal.ThrowExceptionForHR(Marshal.GetHRForLastWin32Error());
+				_volumeName = volname.ToString();
+				_fsName = fsname.ToString();
+				_existingFsFlags = flags;
+			}
 		}
 
 		#region Implementation of IDokanOperations
@@ -22,20 +56,26 @@ namespace Force.ChunkFS
 		public NtStatus CreateFile(string fileName, FileAccess access, FileShare share, FileMode mode,
 			FileOptions options, FileAttributes attributes, DokanFileInfo info)
 		{
+			Console.WriteLine("CreateFile: " + fileName + " A:" + access + " S:" + share + " M:" + mode + " O:" + options + " A:" + attributes + " D:" + info.IsDirectory);
 			if (info.IsDirectory)
 			{
 				switch (mode)
 				{
 					case FileMode.Open:
-						return _storage.OpenDirectory(fileName);
+						return _storage.OpenOrCreateDirectory(fileName, true, false);
 
 					case FileMode.CreateNew:
-						return _storage.CreateDirectory(fileName);
+						return _storage.OpenOrCreateDirectory(fileName, false, true);
+
+					case FileMode.Create:
+					case FileMode.OpenOrCreate:
+							return _storage.OpenOrCreateDirectory(fileName, true, true);
 					default:
 						return NtStatus.NotImplemented;
 				}
 			}
 
+			attributes &= ~FileAttributes.Compressed;
 			return _storage.OpenFile(fileName, access, share, mode, options, attributes, info);
 		}
 
@@ -85,6 +125,7 @@ namespace Force.ChunkFS
 
 		public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, DokanFileInfo info)
 		{
+			attributes &= ~FileAttributes.Compressed;
 			return _storage.SetFileAttributes(fileName, attributes, info);
 		}
 
@@ -142,12 +183,17 @@ namespace Force.ChunkFS
 		public NtStatus GetVolumeInformation(out string volumeLabel, out FileSystemFeatures features,
 			out string fileSystemName, DokanFileInfo info)
 		{
-			volumeLabel = "ChunkFS";
-			fileSystemName = "NTFS";
+			volumeLabel = _volumeName;
+			fileSystemName = _fsName;
 
 			features = FileSystemFeatures.CasePreservedNames | FileSystemFeatures.CaseSensitiveSearch |
 			           FileSystemFeatures.PersistentAcls | FileSystemFeatures.SupportsRemoteStorage |
 			           FileSystemFeatures.UnicodeOnDisk;
+
+			// commented. not helps anyway
+			// compression, we should set this flag to fix copying errors when attached to mount point
+			// if (_existingFsFlags.HasValue && _existingFsFlags.Value.HasFlag((FileSystemFeatures) 0x10))
+			//	features |= (FileSystemFeatures) 0x10;
 
 			return DokanResult.Success;
 		}
@@ -156,8 +202,8 @@ namespace Force.ChunkFS
 			DokanFileInfo info)
 		{
 			security = _storage.GetFileSecurity(fileName, info);
-			if (security == null)
-				Console.WriteLine("Null Security: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
+			// if (security == null)
+			//	Console.WriteLine("Null Security: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
 			return security == null ? NtStatus.AccessDenied : NtStatus.Success;
 		}
 

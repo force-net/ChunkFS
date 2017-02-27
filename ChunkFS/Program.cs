@@ -15,7 +15,7 @@ namespace Force.ChunkFS
 					return;
 				}
 
-				var mirror = new DokanOperations(new WrappedPathFileStorage(new BackDirFileStorage(), args[0]));
+				var mirror = new DokanOperations(new WrappedPathFileStorage(new BackDirFileStorage(), args[0]), args[1]);
 				mirror.Mount(args[1], DokanOptions.RemovableDrive, 4);
 
 				// Console.WriteLine(@"Mounted");

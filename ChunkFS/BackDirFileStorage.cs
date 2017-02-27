@@ -20,53 +20,42 @@ namespace Force.ChunkFS
 		                                           FileAccess.GenericWrite;
 
 
-		public NtStatus OpenDirectory(string directoryPath)
+		public NtStatus OpenOrCreateDirectory(string directoryPath, bool isOpen, bool isCreate)
 		{
 			try
 			{
-				if (!Directory.Exists(directoryPath))
+				var exists = Directory.Exists(directoryPath);
+				if (exists)
 				{
+					if (!isOpen)
+						return DokanResult.FileExists;
 					try
 					{
-						if (!File.GetAttributes(directoryPath).HasFlag(FileAttributes.Directory))
-							return NtStatus.NotADirectory;
+						// ReSharper disable once ReturnValueOfPureMethodIsNotUsed
+						new DirectoryInfo(directoryPath).EnumerateFileSystemInfos().Any();
 					}
-					catch (Exception)
+					catch (UnauthorizedAccessException)
 					{
-						return DokanResult.FileNotFound;
+						return DokanResult.AccessDenied;
 					}
-					return DokanResult.PathNotFound;
 				}
-
-				// ReSharper disable once ReturnValueOfPureMethodIsNotUsed
-				new DirectoryInfo(directoryPath).EnumerateFileSystemInfos().Any();
-			}
-			catch (UnauthorizedAccessException)
-			{
-				return DokanResult.AccessDenied;
-			}
-
-			return NtStatus.Success;
-		}
-
-		public NtStatus CreateDirectory(string directoryPath)
-		{
-			try
-			{
-				if (Directory.Exists(directoryPath))
-					return DokanResult.FileExists;
-				try
+				else
 				{
-					if (File.GetAttributes(directoryPath).HasFlag(FileAttributes.Directory))
-						return DokanResult.AlreadyExists;
+					if (File.Exists(directoryPath))
+						return NtStatus.NotADirectory;
+					if (!isCreate)
+						return DokanResult.PathNotFound;
+					try
+					{
+						Directory.CreateDirectory(directoryPath);
+					}
+					catch (UnauthorizedAccessException)
+					{
+						return DokanResult.AccessDenied;
+					}
 				}
-				catch (IOException)
-				{
-				}
-
-				Directory.CreateDirectory(directoryPath);
 			}
-			catch (UnauthorizedAccessException)
+			catch (IOException)
 			{
 				return DokanResult.AccessDenied;
 			}
@@ -84,14 +73,13 @@ namespace Force.ChunkFS
 			var pathIsDirectory = false;
 
 			var readWriteAttributes = (access & DataAccess) == 0;
-			// var readAccess = (access & DataWriteAccess) == 0;
+			var readAccess = (access & DataWriteAccess) == 0;
 
 			var directoryExist = Directory.Exists(filePath);
 
 			try
 			{
-
-				pathExists = directoryExist || new ChunkedFileInfo(filePath).Exists();
+				pathExists = directoryExist || ChunkedFileInfo.Exists(filePath);
 				pathIsDirectory = directoryExist;
 			}
 			catch (IOException)
@@ -141,14 +129,17 @@ namespace Force.ChunkFS
 			try
 			{
 				var result = DokanResult.Success;
-				info.Context = new ChunkedFileInfo(filePath, mode/*, share, 4096, options*/);
+				info.Context = new ChunkedFileInfo(filePath, mode, !readAccess);
 
 				if (pathExists && (mode == FileMode.OpenOrCreate || mode == FileMode.Create))
 					result = DokanResult.AlreadyExists;
 
 				if (mode == FileMode.CreateNew || mode == FileMode.Create) //Files are always created as Archive
 					attributes |= FileAttributes.Archive;
-				((ChunkedFileInfo)info.Context).Attributes = attributes;
+
+				Console.WriteLine("OpenFIle " + filePath + " attributes: " + attributes);
+				if (attributes != 0)
+					ChunkedFileInfo.SetAttributes(filePath, attributes);
 				// Console.WriteLine("OpenFile result " + filePath + " " + result);
 				return result;
 			}
@@ -187,11 +178,12 @@ namespace Force.ChunkFS
 			{
 				if (info.IsDirectory)
 				{
-					Directory.Delete(fileName);
+					if (Directory.Exists(fileName))
+						Directory.Delete(fileName);
 				}
 				else
 				{
-					new ChunkedFileInfo(fileName).DeleteFile();
+					ChunkedFileInfo.DeleteFile(fileName);
 				}
 			}
 		}
@@ -201,7 +193,7 @@ namespace Force.ChunkFS
 			Console.WriteLine("Read: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null) // memory mapped read
 			{
-				using (var stream = new ChunkedFileInfo(fileName))
+				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open, false))
 				{
 					return stream.Read(buffer, offset);
 				}
@@ -227,7 +219,7 @@ namespace Force.ChunkFS
 			Console.WriteLine("Write: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null)
 			{
-				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open))
+				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open, true))
 				{
 					stream.Write(buffer, offset);
 					return buffer.Length;
@@ -264,12 +256,6 @@ namespace Force.ChunkFS
 			// Console.WriteLine("GetFileInfo: " + fileName + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
-				var chunkedInfo = info.Context as ChunkedFileInfo;
-				if (chunkedInfo != null)
-				{
-					return chunkedInfo.GetFileInfo();
-				}
-
 				if (Directory.Exists(fileName))
 				{
 					var dinfo = new DirectoryInfo(fileName);
@@ -284,7 +270,7 @@ namespace Force.ChunkFS
 					};
 				}
 
-				return new ChunkedFileInfo(fileName).GetFileInfo();
+				return ChunkedFileInfo.GetFileInfo(fileName);
 			}
 			catch (Exception e)
 			{
@@ -321,7 +307,7 @@ namespace Force.ChunkFS
 					// Console.WriteLine(origName);
 					try
 					{
-						return new ChunkedFileInfo(origName).GetFileInfo();
+						return ChunkedFileInfo.GetFileInfo(origName);
 					}
 					catch (Exception e)
 					{
@@ -340,19 +326,16 @@ namespace Force.ChunkFS
 			Console.WriteLine("SetFileAttributes: " + fileName + " " + attributes + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
-				ChunkedFileInfo c = info.Context as ChunkedFileInfo;
-				if (c != null)
-					c.Attributes = attributes;
-				else
+				if (attributes != 0)
 				{
 					if (Directory.Exists(fileName))
 						File.SetAttributes(fileName, attributes);
 					else
 					{
-						using (var chunkedFileInfo = new ChunkedFileInfo(fileName))
-							chunkedFileInfo.Attributes = attributes;
+						ChunkedFileInfo.SetAttributes(fileName, attributes);
 					}
 				}
+
 				return DokanResult.Success;
 			}
 			catch (UnauthorizedAccessException)
@@ -395,7 +378,7 @@ namespace Force.ChunkFS
 						return NtStatus.Success;
 					}
 
-					fs = new ChunkedFileInfo(fileName);
+					fs = new ChunkedFileInfo(fileName, FileMode.Open, false);
 					doCloseFile = true;
 				}
 
@@ -442,10 +425,10 @@ namespace Force.ChunkFS
 			if (Directory.Exists(fileName))
 				return DokanResult.AccessDenied;
 
-			if (!new ChunkedFileInfo(fileName).Exists())
+			if (!ChunkedFileInfo.Exists(fileName))
 				return DokanResult.FileNotFound;
 
-			if (new ChunkedFileInfo(fileName).GetAttributes().HasFlag(FileAttributes.Directory))
+			if (ChunkedFileInfo.GetAttributes(fileName).HasFlag(FileAttributes.Directory))
 				return DokanResult.AccessDenied;
 
 			Console.WriteLine("Can Delete+ " + fileName);
@@ -465,7 +448,7 @@ namespace Force.ChunkFS
 			(info.Context as ChunkedFileInfo)?.Dispose();
 			info.Context = null;
 
-			var exist = info.IsDirectory ? Directory.Exists(newName) : new ChunkedFileInfo(newName).Exists();
+			var exist = info.IsDirectory ? Directory.Exists(newName) : ChunkedFileInfo.Exists(newName);
 
 			try
 			{
@@ -475,7 +458,7 @@ namespace Force.ChunkFS
 					if (info.IsDirectory)
 						Directory.Move(oldName, newName);
 					else
-						new ChunkedFileInfo(oldName).MoveFile(newName);
+						ChunkedFileInfo.MoveFile(oldName, newName);
 					return DokanResult.Success;
 				}
 				else if (replace)
@@ -485,9 +468,25 @@ namespace Force.ChunkFS
 					if (info.IsDirectory) //Cannot replace directory destination - See MOVEFILE_REPLACE_EXISTING
 						return DokanResult.AccessDenied;
 
-					new ChunkedFileInfo(oldName).DeleteFile();
-					new ChunkedFileInfo(oldName).MoveFile(newName);
+					ChunkedFileInfo.DeleteFile(oldName);
+					ChunkedFileInfo.MoveFile(oldName, newName);
 					return DokanResult.Success;
+				}
+				else
+				{
+					// just change case. we cannot do that in normal way, so, lets do this in hard way
+					if (string.Equals(oldName, newName, StringComparison.InvariantCultureIgnoreCase))
+					{
+						// todo: add support for directory
+						if (!info.IsDirectory)
+						{
+							var tmpName = oldName + Guid.NewGuid().ToString("n");
+							ChunkedFileInfo.MoveFile(oldName, tmpName);
+							ChunkedFileInfo.MoveFile(tmpName, newName);
+						}
+
+						return DokanResult.Success;
+					}
 				}
 			}
 			catch (UnauthorizedAccessException)
@@ -554,7 +553,7 @@ namespace Force.ChunkFS
 			{
 				return info.IsDirectory
 					? (FileSystemSecurity) Directory.GetAccessControl(fileName)
-					: new ChunkedFileInfo(fileName).GetAccessControl();
+					: ChunkedFileInfo.GetAccessControl(fileName);
 			}
 			catch (UnauthorizedAccessException)
 			{
@@ -565,7 +564,7 @@ namespace Force.ChunkFS
 
 		public NtStatus SetFileSecurity(string fileName, FileSystemSecurity security, DokanFileInfo info)
 		{
-			Console.WriteLine("SetFileSecurity: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
+			// Console.WriteLine("SetFileSecurity: " + fileName + " " + " " + (info.IsDirectory ? "true" : "false"));
 			try
 			{
 				if (info.IsDirectory)
@@ -574,7 +573,7 @@ namespace Force.ChunkFS
 				}
 				else
 				{
-					new ChunkedFileInfo(fileName).SetAccessControl((FileSecurity)security);
+					ChunkedFileInfo.SetAccessControl(fileName, (FileSecurity)security);
 				}
 
 				return DokanResult.Success;

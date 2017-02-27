@@ -8,8 +8,7 @@ namespace Force.ChunkFS
 {
 	public interface IFileStorage
 	{
-		NtStatus OpenDirectory(string directoryPath);
-		NtStatus CreateDirectory(string directoryPath);
+		NtStatus OpenOrCreateDirectory(string directoryPath, bool isOpen, bool isCreate);
 
 		NtStatus OpenFile(string filePath, FileAccess access, FileShare share, FileMode mode,
 			FileOptions options, FileAttributes attributes, DokanFileInfo info);
