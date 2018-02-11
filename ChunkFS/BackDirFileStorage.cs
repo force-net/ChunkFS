@@ -137,7 +137,7 @@ namespace Force.ChunkFS
 				if (mode == FileMode.CreateNew || mode == FileMode.Create) //Files are always created as Archive
 					attributes |= FileAttributes.Archive;
 
-				Console.WriteLine("OpenFIle " + filePath + " attributes: " + attributes);
+				// Console.WriteLine("OpenFIle " + filePath + " attributes: " + attributes);
 				if (attributes != 0)
 					ChunkedFileInfo.SetAttributes(filePath, attributes);
 				// Console.WriteLine("OpenFile result " + filePath + " " + result);
@@ -190,7 +190,7 @@ namespace Force.ChunkFS
 
 		public int ReadFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
-			Console.WriteLine("Read: " + fileName + " offset " + offset + " length " + buffer.Length);
+			//Console.WriteLine("Read: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null) // memory mapped read
 			{
 				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open, false))
@@ -216,7 +216,7 @@ namespace Force.ChunkFS
 
 		public int WriteFile(string fileName, byte[] buffer, long offset, DokanFileInfo info)
 		{
-			Console.WriteLine("Write: " + fileName + " offset " + offset + " length " + buffer.Length);
+			// Console.WriteLine("Write: " + fileName + " offset " + offset + " length " + buffer.Length);
 			if (info.Context == null)
 			{
 				using (var stream = new ChunkedFileInfo(fileName, FileMode.Open, true))
@@ -323,7 +323,7 @@ namespace Force.ChunkFS
 
 		public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, DokanFileInfo info)
 		{
-			Console.WriteLine("SetFileAttributes: " + fileName + " " + attributes + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
+			// Console.WriteLine("SetFileAttributes: " + fileName + " " + attributes + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
 				if (attributes != 0)
@@ -358,7 +358,7 @@ namespace Force.ChunkFS
 		public NtStatus SetFileTime(string fileName, DateTime? creationTime, DateTime? lastAccessTime,
 			DateTime? lastWriteTime, DokanFileInfo info)
 		{
-			Console.WriteLine("SetFileTime: " + fileName + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
+			// Console.WriteLine("SetFileTime: " + fileName + " " + (info.Context is ChunkedFileInfo ? "true" : "false"));
 			try
 			{
 				var doCloseFile = false;
@@ -389,7 +389,7 @@ namespace Force.ChunkFS
 					fs.LastAccessTime = lastAccessTime;
 
 				if (lastWriteTime.HasValue)
-					fs.LastWriteTime = lastAccessTime;
+					fs.LastWriteTime = lastWriteTime;
 
 				if (doCloseFile)
 					fs.Close();

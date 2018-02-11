@@ -87,16 +87,45 @@ namespace Force.ChunkFS
 			var compressedFileName = fileName + ChunkFSConstants.CompressedFileExtension;
 
 			// we're really compress data
-			if (binfo.Count < bytes.Length)
+			if (binfo.Count + 512 < bytes.Length)
 			{
-				using (var f = File.OpenWrite(compressedFileName))
+				try
 				{
-					f.Write(binfo.Buffer, binfo.Offset, binfo.Count);
-				}
+					using (var f = File.OpenWrite(compressedFileName + ".tmp"))
+					{
+						f.Write(binfo.Buffer, binfo.Offset, binfo.Count);
+					}
 
-				// TODO: more correct synchronizing
-				if (lwt == File.GetLastWriteTimeUtc(fileName))
-					File.Delete(fileName);
+					// TODO: more correct synchronizing
+					if (lwt == File.GetLastWriteTimeUtc(fileName))
+					{
+						File.Move(compressedFileName + ".tmp", compressedFileName);
+
+						try
+						{
+							File.Delete(fileName);
+						}
+						catch (Exception)
+						{
+							// may be opened for reading or writing.
+							DeleteCompressedFile(fileName);
+							// re-add file again
+							Thread.Sleep(100);
+							AddFileToCompressQueue(fileName);
+						}
+					}
+					else
+					{
+						// will create again
+						File.Delete(compressedFileName + ".tmp");
+					}
+				}
+				catch (Exception e)
+				{
+					Console.WriteLine(e);
+					if (File.Exists(compressedFileName))
+						File.Delete(compressedFileName + ".tmp");
+				}
 
 				Console.WriteLine("Compressed " + fileName + " " + (100 * binfo.Count / bytes.Length) + "%");
 			}

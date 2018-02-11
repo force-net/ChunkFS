@@ -56,7 +56,7 @@ namespace Force.ChunkFS
 		public NtStatus CreateFile(string fileName, FileAccess access, FileShare share, FileMode mode,
 			FileOptions options, FileAttributes attributes, DokanFileInfo info)
 		{
-			Console.WriteLine("CreateFile: " + fileName + " A:" + access + " S:" + share + " M:" + mode + " O:" + options + " A:" + attributes + " D:" + info.IsDirectory);
+			// Console.WriteLine("CreateFile: " + fileName + " A:" + access + " S:" + share + " M:" + mode + " O:" + options + " A:" + attributes + " D:" + info.IsDirectory);
 			if (info.IsDirectory)
 			{
 				switch (mode)

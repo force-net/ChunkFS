@@ -29,6 +29,8 @@ namespace Force.ChunkFS
 
 		private readonly bool _isWriteAccess;
 
+		private readonly object _writeLockObject = new object();
+
 		public ChunkedFileInfo(string fileName, FileMode mode, bool isWriteAccess)
 		{
 			_filePrefix = Path.GetFileName(fileName);
@@ -79,6 +81,12 @@ namespace Force.ChunkFS
 
 		public void Write(byte[] buffer, long position)
 		{
+			lock(_writeLockObject)
+				WriteInternal(buffer, position);
+		}
+
+		private void WriteInternal(byte[] buffer, long position)
+		{
 			if (!_isWriteAccess)
 				throw new InvalidOperationException("File is opened for read access");
 			// position from end
@@ -109,6 +117,12 @@ namespace Force.ChunkFS
 		}
 
 		public int Read(byte[] buffer, long position)
+		{
+			lock (_writeLockObject)
+				return ReadInternal(buffer, position);
+		}
+
+		private int ReadInternal(byte[] buffer, long position)
 		{
 			// position from end
 			if (position < 0)
@@ -145,7 +159,7 @@ namespace Force.ChunkFS
 				_currentReadStream?.Dispose();
 				var path = Path.Combine(_directory, _filePrefix + ChunkFSConstants.ChunkExtension + requiredChunk.ToString("0000", CultureInfo.InvariantCulture));
 				if (File.Exists(path))
-					_currentReadStream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+					_currentReadStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 				else
 				{
 					// compressed data
@@ -205,8 +219,12 @@ namespace Force.ChunkFS
 			_currentReadStream?.Dispose();
 			_currentReadStream = null;
 
-			_currentWriteStream?.Dispose();
-			_currentWriteStream = null;
+			lock (_writeLockObject)
+			{
+				_currentWriteStream?.Dispose();
+				_currentWriteStream = null;
+			}
+
 			if (_currentWriteStreamFileName != null)
 				CompressorQueue.Instance.AddFileToCompressQueue(_currentWriteStreamFileName);
 
@@ -228,7 +246,8 @@ namespace Force.ChunkFS
 
 		public void Flush()
 		{
-			_currentWriteStream?.Flush();
+			lock(_writeLockObject)
+				_currentWriteStream?.Flush();
 		}
 
 		public static void MoveFile(string oldPath, string newPath)
@@ -254,6 +273,12 @@ namespace Force.ChunkFS
 		}
 
 		public void SetLength(long length)
+		{
+			lock(_writeLockObject)
+				SetLengthInternal(length);
+		}
+
+		private void SetLengthInternal(long length)
 		{
 			if (_length.HasValue && _length == length)
 				return;
@@ -312,10 +337,17 @@ namespace Force.ChunkFS
 
 		public static long GetLength(string fileName)
 		{
-			var ef = GetExistingFiles(Path.GetDirectoryName(fileName) ?? string.Empty, Path.GetFileName(fileName));
-			return ef.Sum(x => x.EndsWith(ChunkFSConstants.CompressedFileExtension)
-				? ChunkFSConstants.ChunkSize
-				: new FileInfo(x).Length);
+			return new DirectoryInfo(Path.GetDirectoryName(fileName) ?? string.Empty)
+				.GetFiles(Path.GetFileName(fileName) + ChunkFSConstants.ChunkExtension + "*")
+				.Where(x => !x.Name.EndsWith(ChunkFSConstants.MetaFileExtension))
+				.Sum(x => x.Name.EndsWith(ChunkFSConstants.CompressedFileExtension)
+					? ChunkFSConstants.ChunkSize
+					: x.Length);
+
+			// var ef = GetExistingFiles(Path.GetDirectoryName(fileName) ?? string.Empty, Path.GetFileName(fileName));
+			// return ef.Sum(x => x.EndsWith(ChunkFSConstants.CompressedFileExtension)
+			//	? ChunkFSConstants.ChunkSize
+			//	: new FileInfo(x).Length);
 		}
 
 		public static FileInformation GetFileInfo(string fileName)
